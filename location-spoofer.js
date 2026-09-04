@@ -43,18 +43,13 @@
   // Stable marker that precedes the AppleWLoc protobuf inside a REAL Apple /clls/wloc
   // response. After the marker come 2 bytes (uint16 BE payload length) then the payload.
   var APPLE_WLOC_MARKER = bytesFromArray([0x00, 0x00, 0x00, 0x01, 0x00, 0x00]);
-  var ROOT_DROP_FIELDS = { 3: true, 4: true, 33: true };
+  // Preserve all root-level fields. Dropping fields that iOS validates can make
+  // an otherwise correctly patched response get ignored as invalid.
+  var ROOT_DROP_FIELDS = {};
   var CELL_RESPONSE_FIELDS = { 22: true, 24: true };
-  var LOCATION_REPLACED_FIELDS = {
-    1: true,
-    2: true,
-    3: true,
-    4: true,
-    5: true,
-    6: true,
-    11: true,
-    12: true
-  };
+  // Only replace coordinates and horizontal accuracy. Preserve altitude,
+  // vertical accuracy, motion and unknown fields from Apple's response.
+  var LOCATION_REPLACED_FIELDS = { 1: true, 2: true, 3: true };
 
   function bytesFromArray(values) {
     return new Uint8Array(values);
@@ -485,40 +480,49 @@
   function patchLocation(locationPayload, config) {
     var parts = [];
     var fields = locationPayload.length ? parseFields(locationPayload) : [];
-    for (var i = 0; i < fields.length; i += 1) {
-      if (!LOCATION_REPLACED_FIELDS[fields[i].fieldNumber]) {
-        parts.push(fields[i].raw);
+    var hasLatitude = false;
+    var hasLongitude = false;
+    var i;
+
+    for (i = 0; i < fields.length; i += 1) {
+      if (fields[i].fieldNumber === 1 && fields[i].wireType === 0) {
+        hasLatitude = true;
+      }
+      if (fields[i].fieldNumber === 2 && fields[i].wireType === 0) {
+        hasLongitude = true;
       }
     }
 
-    parts.push(makeVarintField(1, coordToInt(config.latitude)));
-    parts.push(makeVarintField(2, coordToInt(config.longitude)));
-    parts.push(makeVarintField(3, config.horizontalAccuracy));
-    parts.push(makeVarintField(4, config.unknownValue4));
-    parts.push(makeVarintField(5, config.altitude));
-    parts.push(makeVarintField(6, config.verticalAccuracy));
-    parts.push(makeVarintField(11, config.motionActivityType));
-    parts.push(makeVarintField(12, config.motionActivityConfidence));
+    // Do not add coordinates to unrelated location-shaped protobuf messages.
+    if (!hasLatitude || !hasLongitude) {
+      return locationPayload;
+    }
+
+    for (i = 0; i < fields.length; i += 1) {
+      var field = fields[i];
+      if (field.fieldNumber === 1 && field.wireType === 0) {
+        parts.push(makeVarintField(1, coordToInt(config.latitude)));
+      } else if (field.fieldNumber === 2 && field.wireType === 0) {
+        parts.push(makeVarintField(2, coordToInt(config.longitude)));
+      } else if (field.fieldNumber === 3 && field.wireType === 0) {
+        parts.push(makeVarintField(3, config.horizontalAccuracy));
+      } else {
+        parts.push(field.raw);
+      }
+    }
     return concatBytes(parts);
   }
 
   function patchWifiDevice(wifiPayload, config) {
     var fields = parseFields(wifiPayload);
     var parts = [];
-    var patchedLocation = false;
-
     for (var i = 0; i < fields.length; i += 1) {
       var field = fields[i];
       if (field.fieldNumber === 2 && field.wireType === 2) {
         parts.push(makeLengthDelimitedField(2, patchLocation(field.valueBytes, config)));
-        patchedLocation = true;
       } else {
         parts.push(field.raw);
       }
-    }
-
-    if (!patchedLocation) {
-      parts.push(makeLengthDelimitedField(2, patchLocation(bytesFromArray([]), config)));
     }
 
     return concatBytes(parts);
@@ -527,20 +531,13 @@
   function patchCellTower(cellPayload, config) {
     var fields = parseFields(cellPayload);
     var parts = [];
-    var patchedLocation = false;
-
     for (var i = 0; i < fields.length; i += 1) {
       var field = fields[i];
       if (field.fieldNumber === 5 && field.wireType === 2) {
         parts.push(makeLengthDelimitedField(5, patchLocation(field.valueBytes, config)));
-        patchedLocation = true;
       } else {
         parts.push(field.raw);
       }
-    }
-
-    if (!patchedLocation) {
-      parts.push(makeLengthDelimitedField(5, patchLocation(bytesFromArray([]), config)));
     }
 
     return concatBytes(parts);
