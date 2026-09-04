@@ -43,7 +43,7 @@
   // Stable marker that precedes the AppleWLoc protobuf inside a REAL Apple /clls/wloc
   // response. After the marker come 2 bytes (uint16 BE payload length) then the payload.
   var APPLE_WLOC_MARKER = bytesFromArray([0x00, 0x00, 0x00, 0x01, 0x00, 0x00]);
-  var BUILD_ID = "20260904-minimal-fields-v2";
+  var BUILD_ID = "20260904-request-mode-v3";
   // Preserve all root-level fields. Dropping fields that iOS validates can make
   // an otherwise correctly patched response get ignored as invalid.
   var ROOT_DROP_FIELDS = {};
@@ -514,16 +514,35 @@
     return concatBytes(parts);
   }
 
+  function makeSyntheticLocation(config) {
+    return concatBytes([
+      makeVarintField(1, coordToInt(config.latitude)),
+      makeVarintField(2, coordToInt(config.longitude)),
+      makeVarintField(3, config.horizontalAccuracy),
+      makeVarintField(4, config.unknownValue4),
+      makeVarintField(5, config.altitude),
+      makeVarintField(6, config.verticalAccuracy),
+      makeVarintField(11, config.motionActivityType),
+      makeVarintField(12, config.motionActivityConfidence)
+    ]);
+  }
+
   function patchWifiDevice(wifiPayload, config) {
     var fields = parseFields(wifiPayload);
     var parts = [];
+    var hasLocation = false;
     for (var i = 0; i < fields.length; i += 1) {
       var field = fields[i];
       if (field.fieldNumber === 2 && field.wireType === 2) {
         parts.push(makeLengthDelimitedField(2, patchLocation(field.valueBytes, config)));
+        hasLocation = true;
       } else {
         parts.push(field.raw);
       }
+    }
+
+    if (!hasLocation && config.mode === "request") {
+      parts.push(makeLengthDelimitedField(2, makeSyntheticLocation(config)));
     }
 
     return concatBytes(parts);
@@ -532,13 +551,19 @@
   function patchCellTower(cellPayload, config) {
     var fields = parseFields(cellPayload);
     var parts = [];
+    var hasLocation = false;
     for (var i = 0; i < fields.length; i += 1) {
       var field = fields[i];
       if (field.fieldNumber === 5 && field.wireType === 2) {
         parts.push(makeLengthDelimitedField(5, patchLocation(field.valueBytes, config)));
+        hasLocation = true;
       } else {
         parts.push(field.raw);
       }
+    }
+
+    if (!hasLocation && config.mode === "request") {
+      parts.push(makeLengthDelimitedField(5, makeSyntheticLocation(config)));
     }
 
     return concatBytes(parts);
@@ -1897,6 +1922,7 @@
         }
         var requestBody = messageBodyToBytes($request);
         if (config.debug) {
+          console.log("Location spoofer build: " + BUILD_ID);
           console.log("Location spoofer request mode body length: " + (requestBody ? requestBody.length : 0));
         }
         if (!requestBody) {
