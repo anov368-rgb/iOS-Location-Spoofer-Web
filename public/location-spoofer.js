@@ -43,6 +43,7 @@
   // Stable marker that precedes the AppleWLoc protobuf inside a REAL Apple /clls/wloc
   // response. After the marker come 2 bytes (uint16 BE payload length) then the payload.
   var APPLE_WLOC_MARKER = bytesFromArray([0x00, 0x00, 0x00, 0x01, 0x00, 0x00]);
+  var BUILD_ID = "20260904-minimal-fields-v2";
   // Preserve all root-level fields. Dropping fields that iOS validates can make
   // an otherwise correctly patched response get ignored as invalid.
   var ROOT_DROP_FIELDS = {};
@@ -1265,6 +1266,7 @@
             return;
           }
           if (config.debug) {
+            console.log("Location spoofer build: " + BUILD_ID);
             console.log("Location spoofer response body: " + responseBody.length + " bytes, head=" + hexPreview(responseBody, 32));
           }
           logHttpDump("response-original", $response, config);
